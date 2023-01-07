@@ -218,6 +218,7 @@ template<typename T> void percentileClipping(T * g, float *gnorm_vec, int step, 
   CUDA_CHECK_RETURN(cudaPeekAtLastError());
 }
 
+#ifndef NO_CUBLASLT
 void gemmex(Context *context, bool transposeA, bool transposeB, int m, int n, int k, void *A, void *B, void *C, int lda, int ldb, int ldc)
 {
   const int falpha = 1;
@@ -270,6 +271,7 @@ void strided_gemmex(Context *context, bool transposeA, bool transposeB, int m, i
     }
 
 }
+#endif
 
 int roundoff(int v, int d) {
     return (v + d - 1) / d * d;
@@ -343,10 +345,9 @@ template int get_leading_dim<ROW>(int dim1, int dim2);
 template int get_leading_dim<COL>(int dim1, int dim2);
 template int get_leading_dim<COL32>(int dim1, int dim2);
 
+#ifndef NO_CUBLASLT
 template <typename T, int SRC, int TARGET, bool transpose, int DTYPE> void transform(cublasLtHandle_t ltHandle, T *A, T *out, int dim1, int dim2)
 {
-#ifdef NO_CUBLASLT
-#else
   cublasLtOrder_t orderA = get_order<SRC>();
   cublasLtOrder_t orderOut = get_order<TARGET>();
   int ldA = get_leading_dim<SRC>(dim1, dim2);
@@ -385,7 +386,6 @@ template <typename T, int SRC, int TARGET, bool transpose, int DTYPE> void trans
   if (A_desc) checkCublasStatus(cublasLtMatrixLayoutDestroy(A_desc));
   if (out_desc) checkCublasStatus(cublasLtMatrixLayoutDestroy(out_desc));
   if (A2Out_desc) checkCublasStatus(cublasLtMatrixTransformDescDestroy(A2Out_desc));
-#endif
 }
 
 template void transform<int8_t, ROW, COL, false, 8>(cublasLtHandle_t ltHandle, int8_t *A, int8_t *out, int dim1, int dim2);
@@ -399,16 +399,6 @@ template void transform<int32_t, COL32, ROW, false, 32>(cublasLtHandle_t ltHandl
 
 template <int FORMATB, int DTYPE_OUT, int SCALE_ROWS> int igemmlt(cublasLtHandle_t ltHandle, int m, int n, int k, const int8_t *A, const int8_t *B, void *C, float *row_scale, int lda, int ldb, int ldc)
 {
-#ifdef NO_CUBLASLT
-  cout << "" << endl;
-  cout << "=============================================" << endl;
-  cout << "ERROR: Your GPU does not support Int8 Matmul!" << endl;
-  cout << "=============================================" << endl;
-  cout << "" << endl;
-  assert(false);
-
-	return 0;
-#else
     int has_error = 0;
     cublasLtMatmulDesc_t matmulDesc = NULL;
     cublasLtMatrixLayout_t Adesc = NULL, Bdesc = NULL, Cdesc = NULL;
@@ -463,8 +453,8 @@ template <int FORMATB, int DTYPE_OUT, int SCALE_ROWS> int igemmlt(cublasLtHandle
       printf("error detected");
 
     return has_error;
-#endif
 }
+#endif
 
 int fill_up_to_nearest_multiple(int value, int multiple)
 {
@@ -576,12 +566,10 @@ template <int FORMAT, int TRANSPOSE> void transformRowToFormat(char * A, char *o
   CUDA_CHECK_RETURN(cudaPeekAtLastError());
 }
 
+
+#ifndef NO_CUBLASLT
 void spmm_coo(cusparseHandle_t handle, int *A_rowidx, int *A_colidx, half *A_vals, int A_nnz, int A_rows, int A_cols, int B_cols, int ldb, half *B, int ldc, half* C, bool transposed_B)
 {
-
-#ifdef NO_CUBLASLT
-#else
-
     cusparseSpMatDescr_t descA;
     cusparseDnMatDescr_t descB, descC;
 
@@ -628,8 +616,8 @@ void spmm_coo(cusparseHandle_t handle, int *A_rowidx, int *A_colidx, half *A_val
     CHECK_CUSPARSE( cusparseDestroyDnMat(descB) );
     CHECK_CUSPARSE( cusparseDestroyDnMat(descC) );
     CUDA_CHECK_RETURN( cudaFree(dBuffer) );
-#endif
 }
+#endif
 
 template <typename T, int BITS> void spmm_coo_very_sparse_naive(int *max_count, int *max_idx, int *offset_rowidx, int *rowidx, int *colidx, half *values, T *B, half *out, float *dequant_stats, int nnz_rows, int nnz, int rowsA, int rowsB, int colsB)
 {
@@ -671,12 +659,14 @@ template void extractOutliers<COL_AMPERE>(char * A, int *idx, char *out, int idx
 template void spmm_coo_very_sparse_naive<half, 16>(int *max_count, int *max_idx, int *offset_rowidx, int *rowidx, int *colidx, half *values, half *B, half *out, float *dequant_stats, int nnz_rows, int nnz, int rowsA, int rowsB, int colsB);
 template void spmm_coo_very_sparse_naive<signed char, 8>(int *max_count, int *max_idx, int *offset_rowidx, int *rowidx, int *colidx, half *values, signed char *B, half *out, float *dequant_stats, int nnz_rows, int nnz, int rowsA, int rowsB, int colsB);
 
+#ifndef NO_CUBLASLT
 template int igemmlt<COL_TURING, 32, 0>(cublasLtHandle_t ltHandle, int m, int n, int k, const int8_t *A, const int8_t *B, void *C, float *row_scale, int lda, int ldb, int ldc);
 template int igemmlt<COL_TURING, 8, 0>(cublasLtHandle_t ltHandle, int m, int n, int k, const int8_t *A, const int8_t *B, void *C, float *row_scale, int lda, int ldb, int ldc);
 template int igemmlt<COL_TURING, 8, 1>(cublasLtHandle_t ltHandle, int m, int n, int k, const int8_t *A, const int8_t *B, void *C, float *row_scale, int lda, int ldb, int ldc);
 template int igemmlt<COL_AMPERE, 32, 0>(cublasLtHandle_t ltHandle, int m, int n, int k, const int8_t *A, const int8_t *B, void *C, float *row_scale, int lda, int ldb, int ldc);
 template int igemmlt<COL_AMPERE, 8, 0>(cublasLtHandle_t ltHandle, int m, int n, int k, const int8_t *A, const int8_t *B, void *C, float *row_scale, int lda, int ldb, int ldc);
 template int igemmlt<COL_AMPERE, 8, 1>(cublasLtHandle_t ltHandle, int m, int n, int k, const int8_t *A, const int8_t *B, void *C, float *row_scale, int lda, int ldb, int ldc);
+#endif
 
 template void transformRowToFormat<COL32, 0>(char * A, char *out, int rows, int cols);
 template void transformRowToFormat<COL32, 1>(char * A, char *out, int rows, int cols);

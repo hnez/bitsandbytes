@@ -6,6 +6,10 @@ ifeq ($(CUDA_HOME),)
 	CUDA_HOME:= $(shell which nvcc | rev | cut -d'/' -f3- | rev)
 endif
 
+ifeq ($(ROCM_HOME),)
+	ROCM_HOME:= $(shell which hipcc | rev | cut -d'/' -f3- | rev)
+endif
+
 ifndef CUDA_VERSION
 $(warning WARNING: CUDA_VERSION not set. Call make with CUDA string, for example: make cuda11x CUDA_VERSION=115 or make cpuonly CUDA_VERSION=CPU)
 CUDA_VERSION:=
@@ -13,18 +17,24 @@ endif
 
 
 NVCC := $(CUDA_HOME)/bin/nvcc
+HIPCC := $(ROCM_HOME)/bin/hipcc
 
 ###########################################
 
 CSRC := $(ROOT_DIR)/csrc
+CSRC_ROCM := $(ROOT_DIR)/csrc_amd
 BUILD_DIR:= $(ROOT_DIR)/build
 
 FILES_CUDA := $(CSRC)/ops.cu $(CSRC)/kernels.cu
+FILES_ROCM := $(CSRC_ROCM)/ops.hip $(CSRC_ROCM)/kernels.hip
 FILES_CPP := $(CSRC)/common.cpp $(CSRC)/cpu_ops.cpp $(CSRC)/pythonInterface.c
+FILES_CPP_ROCM := $(CSRC_ROCM)/common.cpp $(CSRC_ROCM)/cpu_ops.cpp $(CSRC_ROCM)/pythonInterface.c
 
 INCLUDE :=  -I $(CUDA_HOME)/include -I $(ROOT_DIR)/csrc -I $(CONDA_PREFIX)/include -I $(ROOT_DIR)/include
 INCLUDE_10x :=  -I $(CUDA_HOME)/include -I $(ROOT_DIR)/csrc -I $(ROOT_DIR)/dependencies/cub -I $(ROOT_DIR)/include
+INCLUDE_ROCM := -I $(ROCM_HOME)/include -I $(CSRC_ROCM) -I $(CONDA_PREFIX)/include -I $(ROOT_DIR)/include
 LIB := -L $(CUDA_HOME)/lib64 -lcudart -lcublas -lcublasLt -lcurand -lcusparse -L $(CONDA_PREFIX)/lib
+LIB_ROCM := -L $(ROCM_HOME)/lib -lamdhip64 -lrocblas -lhipblas -lhipsparse -L $(CONDA_PREFIX)/lib
 
 # NVIDIA NVCC compilation flags
 COMPUTE_CAPABILITY += -gencode arch=compute_50,code=sm_50 # Maxwell
@@ -104,6 +114,11 @@ cuda12x: $(BUILD_DIR) env
 	$(NVCC) $(CC_cublasLt111) $(CC_ADA_HOPPER) -Xcompiler '-fPIC' -dlink $(BUILD_DIR)/ops.o $(BUILD_DIR)/kernels.o -o $(BUILD_DIR)/link.o
 	$(GPP) -std=c++14 -DBUILD_CUDA -shared -fPIC $(INCLUDE) $(BUILD_DIR)/ops.o $(BUILD_DIR)/kernels.o $(BUILD_DIR)/link.o $(FILES_CPP) -o ./bitsandbytes/libbitsandbytes_cuda$(CUDA_VERSION).so $(LIB)
 
+rocm_gfx1030: $(BUILD_DIR) env $(CSRC_ROCM)/.hipify
+	$(HIPCC) -std=c++14 -c -fPIC --amdgpu-target=gfx1030 $(INCLUDE_ROCM) -o $(BUILD_DIR)/ops.o -D NO_CUBLASLT $(CSRC_ROCM)/ops.hip
+	$(HIPCC) -std=c++14 -c -fPIC --amdgpu-target=gfx1030 $(INCLUDE_ROCM) -o $(BUILD_DIR)/kernels.o -D NO_CUBLASLT -D ROCM $(CSRC_ROCM)/kernels.hip
+	$(GPP) -std=c++14 -D __HIP_PLATFORM_AMD__ -DBUILD_CUDA -D NO_CUBLASLT -D ROCM -shared -fPIC $(INCLUDE_ROCM) $(BUILD_DIR)/ops.o $(BUILD_DIR)/kernels.o $(FILES_CPP_ROCM) -o ./bitsandbytes/libbitsandbytes_rocm_gfx1030.so $(LIB_ROCM)
+
 cpuonly: $(BUILD_DIR) env
 	$(GPP) -std=c++14 -shared -fPIC -I $(ROOT_DIR)/csrc -I $(ROOT_DIR)/include $(FILES_CPP) -o ./bitsandbytes/libbitsandbytes_cpu.so
 
@@ -119,6 +134,12 @@ env:
 	@echo "PATH: $(PATH)"
 	@echo "LD_LIBRARY_PATH: $(LD_LIBRARY_PATH)"
 	@echo "============================"
+
+$(CSRC_ROCM)/.hipify: hipify.py $(FILES_CUDA)
+	rm -rf $(CSRC_ROCM)
+	./hipify.py
+	mv $(CSRC_ROCM)/pythonInterface_hip.c $(CSRC_ROCM)/pythonInterface.c
+	touch $(CSRC_ROCM)/.hipify
 
 $(BUILD_DIR):
 	mkdir -p build

@@ -84,7 +84,7 @@ class CUDASetup:
         self.lib = None
         self.initialized = False
 
-    def run_cuda_setup(self):
+    def _run_cuda_setup(self):
         self.initialized = True
         self.cuda_setup_log = []
 
@@ -124,6 +124,16 @@ class CUDASetup:
         except Exception as ex:
             self.add_log_entry(str(ex))
             self.print_log_stack()
+
+    def _run_rocm_setup(self):
+        package_dir = Path(__file__).parent.parent
+        self.lib = ct.cdll.LoadLibrary(f'{package_dir}/libbitsandbytes_rocm_gfx1030.so')
+
+    def run_cuda_setup(self):
+        if torch.version.hip is not None:
+            self._run_rocm_setup()
+        else:
+            self._run_cuda_setup()
 
     def add_log_entry(self, msg, is_warning=False):
         self.cuda_setup_log.append((msg, is_warning))
